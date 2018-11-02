@@ -14,13 +14,15 @@ EagleBird::WorldGeneration::WorldGenerator::~WorldGenerator()
 
 void EagleBird::WorldGeneration::WorldGenerator::GenerateWorld()
 {
+	
 	std::cout << "World generation seed: " << _seed << std::endl;
-	const float GENERAL_FREQUENCY = 0.01f;
+
 	_height_map = new utils::NoiseMap();
+	_temperature_map = new utils::NoiseMap();
 	
 	module::Perlin* biome_module = new module::Perlin();
 	biome_module->SetSeed(_seed + 1);
-	biome_module->SetFrequency(0.001);
+	biome_module->SetFrequency(0.002);
 	biome_module->SetPersistence(0.2);
 	biome_module->SetOctaveCount(2);
 	module::Clamp* biome_module_cl = new module::Clamp();
@@ -29,50 +31,10 @@ void EagleBird::WorldGeneration::WorldGenerator::GenerateWorld()
 	_biome_module = biome_module_cl;
 	_biomes_manager = new BiomeManager(biome_module_cl);
 
-	module::Module* baseElevation = this->GenerateBaseElevation(_seed, GENERAL_FREQUENCY);
-	module::Cache* badlandsTerrain = this->GenerateBadlands(_seed, GENERAL_FREQUENCY);
-	module::Cache* mountainsTerrain = this->GenerateMountains(_seed, GENERAL_FREQUENCY);
-	//module::Module* riversTerrain = this->GenerateRivers(_seed, 0.00001);
 
-	module::Billow* baseFlatTerrain = new module::Billow();
-	baseFlatTerrain->SetFrequency(0.01);
-	baseFlatTerrain->SetSeed(_seed + 20);
-	baseFlatTerrain->SetNoiseQuality(QUALITY_STD);
-	module::ScaleBias* flatTerrain = new module::ScaleBias();
-	flatTerrain->SetSourceModule(0, *baseFlatTerrain);
-	flatTerrain->SetScale(0.06);
-	flatTerrain->SetBias(0.15);
-
-
-	module::ScaleBias* mountainsTerrainScaled = new module::ScaleBias();
-	mountainsTerrainScaled->SetSourceModule(0, *mountainsTerrain);
-	mountainsTerrainScaled->SetScale(1.0);
-	mountainsTerrainScaled->SetBias(0.2);
-
-	module::Perlin* terrainType = new module::Perlin();
-	terrainType->SetFrequency(0.001);
-	terrainType->SetPersistence(0.5);
-	terrainType->SetOctaveCount(4);
-	module::Turbulence* terrainTypeDef_tu = new module::Turbulence();
-	terrainTypeDef_tu->SetSourceModule(0, *terrainType);
-	terrainTypeDef_tu->SetSeed(_seed + 20);
-	terrainTypeDef_tu->SetFrequency(0.02);
-	terrainTypeDef_tu->SetPower(2.59375);
-	terrainTypeDef_tu->SetRoughness(2);
-	_terrain_type = terrainType;
-
-	_biomes_manager->AddBiome(new Biome(LOWESET_TEMPERATURE, -0.1, flatTerrain));
-	_biomes_manager->AddBiome(new Biome(-0.1, 0.5, mountainsTerrainScaled));
-	_biomes_manager->AddBiome(new Biome(0.5, HIGHEST_TEMPERATURE, badlandsTerrain));
-	//_biomes_map.insert(std::pair<std::pair<double, double>, module::Module*>(std::make_pair(0.0, 1.0), flatTerrain));
-	//_biomes_map.insert(std::pair<std::pair<double, double>, module::Module*>(std::make_pair(0.0, 1.0), flatTerrain));
-
-	module::Select* finalTerrain = new module::Select();
-	finalTerrain->SetSourceModule(0, *flatTerrain);
-	finalTerrain->SetSourceModule(1, *mountainsTerrainScaled);
-	finalTerrain->SetControlModule(*biome_module_cl);
-	finalTerrain->SetBounds(0.0, 1.0);
-	finalTerrain->SetEdgeFalloff(0.125);
+	_biomes_manager->AddBiome(new FlatBiome(_seed, LOWESET_TEMPERATURE, -0.1));
+	_biomes_manager->AddBiome(new MountainBiome(_seed, -0.1, 0.3));
+	_biomes_manager->AddBiome(new DesetBiome(_seed, 0.3, HIGHEST_TEMPERATURE));
 
 	utils::NoiseMapBuilderPlane heightMapBuilder;
 	heightMapBuilder.SetSourceModule(*_biomes_manager);
@@ -104,15 +66,15 @@ void EagleBird::WorldGeneration::WorldGenerator::GenerateWorld()
 	//exit(0);
 }
 
-float EagleBird::WorldGeneration::WorldGenerator::GetBiomeValue(float x, float y)
-{
-	return _biome_module->GetValue(x, 0.0, y);
-}
-
 float EagleBird::WorldGeneration::WorldGenerator::GetHeight(float x, float y)
 {
-	//return (_biomes_manager->GetValue(x, y) + 1.0) / 2.0 * _size_y;
-	return (_height_map->GetValue(x, y) + 1.0) / 2.0 * _size_y;
+	return (_biomes_manager->GetValue(x, 0.0, y) + 1.0) / 2.0 * _size_y;
+	//return (_height_map->GetValue(x, y) + 1.0) / 2.0 * _size_y;
+}
+
+glm::vec3 EagleBird::WorldGeneration::WorldGenerator::GetColor(float x, float y)
+{
+	return _biomes_manager->GetColor(x, y);
 }
 
 module::Module * EagleBird::WorldGeneration::WorldGenerator::GenerateBaseElevation(float seed, float general_frequency)
@@ -406,306 +368,6 @@ module::Cache* EagleBird::WorldGeneration::WorldGenerator::GenerateBadlands(floa
 	return badlandsTerrain;
 }
 
-module::Cache * EagleBird::WorldGeneration::WorldGenerator::GenerateMountains(float seed, float general_frequency)
-{
-	const double MOUNTAIN_GLACIATION = 1.375;
-	const double MOUNTAIN_LACUNARITY = 2.142578125;
-	const double MOUNTAINS_TWIST = 0.0;
-	const double MOUNTAINS_FREQUENCY = 0.01 / 1723.0;
-	const double RIVERS_FREQUENCY = 1.0;
-	const double RIVERS_DEEPNESS = 1.275;
-
-	////////////////////////////////////////////////////////////////////////////
-	// Module group: mountainous terrain
-	////////////////////////////////////////////////////////////////////////////
-
-	////////////////////////////////////////////////////////////////////////////
-	// Module subgroup: mountain base definition (9 noise modules)
-	//
-	// This subgroup generates the base-mountain elevations.  Other subgroups
-	// will add the ridges and low areas to the base elevations.
-	//
-	// -1.0 represents low mountainous terrain and +1.0 represents high
-	// mountainous terrain.
-	//
-
-	// 1: [Mountain-ridge module]: This ridged-multifractal-noise module
-	//    generates the mountain ridges.
-	module::RidgedMulti* mountainBaseDef_rm0 = new module::RidgedMulti();
-	mountainBaseDef_rm0->SetSeed(seed + 30);
-	mountainBaseDef_rm0->SetFrequency(MOUNTAINS_FREQUENCY * 1723.0);
-	mountainBaseDef_rm0->SetLacunarity(MOUNTAIN_LACUNARITY);
-	mountainBaseDef_rm0->SetOctaveCount(4);
-	mountainBaseDef_rm0->SetNoiseQuality(QUALITY_STD);
-
-	// 2: [Scaled-mountain-ridge module]: Next, a scale/bias module scales the
-	//    output value from the mountain-ridge module so that its ridges are not
-	//    too high.  The reason for this is that another subgroup adds actual
-	//    mountainous terrain to these ridges.
-	module::ScaleBias* mountainBaseDef_sb0 = new module::ScaleBias();
-	mountainBaseDef_sb0->SetSourceModule(0, *mountainBaseDef_rm0);
-	mountainBaseDef_sb0->SetScale(0.5);
-	mountainBaseDef_sb0->SetBias(0.375);
-
-	// 3: [River-valley module]: This ridged-multifractal-noise module generates
-	//    the river valleys.  It has a much lower frequency than the mountain-
-	//    ridge module so that more mountain ridges will appear outside of the
-	//    valleys.  Note that this noise module generates ridged-multifractal
-	//    noise using only one octave; this information will be important in the
-	//    next step.
-	module::RidgedMulti* mountainBaseDef_rm1 = new module::RidgedMulti();
-	mountainBaseDef_rm1->SetSeed(seed + 31);
-	mountainBaseDef_rm1->SetFrequency(MOUNTAINS_FREQUENCY * 367.0 * RIVERS_FREQUENCY);
-	mountainBaseDef_rm1->SetLacunarity(MOUNTAIN_LACUNARITY);
-	mountainBaseDef_rm1->SetOctaveCount(1);
-	mountainBaseDef_rm1->SetNoiseQuality(QUALITY_BEST);
-
-	module::Exponent* mountainBaseDef_ex = new module::Exponent();
-	mountainBaseDef_ex->SetSourceModule(0, *mountainBaseDef_rm1);
-	mountainBaseDef_ex->SetExponent(RIVERS_DEEPNESS);
-
-	// 4: [Scaled-river-valley module]: Next, a scale/bias module applies a
-	//    scaling factor of -2.0 to the output value from the river-valley
-	//    module.  This stretches the possible elevation values because one-
-	//    octave ridged-multifractal noise has a lower range of output values
-	//    than multiple-octave ridged-multifractal noise.  The negative scaling
-	//    factor inverts the range of the output value, turning the ridges from
-	//    the river-valley module into valleys.
-	module::ScaleBias* mountainBaseDef_sb1 = new module::ScaleBias();
-	mountainBaseDef_sb1->SetSourceModule(0, *mountainBaseDef_ex);
-	mountainBaseDef_sb1->SetScale(-2.0);
-	mountainBaseDef_sb1->SetBias(-0.5);
-
-	// 5: [Low-flat module]: This low constant value is used by step 6.
-	module::Const* mountainBaseDef_co = new module::Const();
-	mountainBaseDef_co->SetConstValue(-1.0);
-
-	// 6: [Mountains-and-valleys module]: This blender module merges the
-	//    scaled-mountain-ridge module and the scaled-river-valley module
-	//    together.  It causes the low-lying areas of the terrain to become
-	//    smooth, and causes the high-lying areas of the terrain to contain
-	//    ridges.  To do this, it uses the scaled-river-valley module as the
-	//    control module, causing the low-flat module to appear in the lower
-	//    areas and causing the scaled-mountain-ridge module to appear in the
-	//    higher areas.
-	module::Blend* mountainBaseDef_bl = new module::Blend();
-	mountainBaseDef_bl->SetSourceModule(0, *mountainBaseDef_co);
-	mountainBaseDef_bl->SetSourceModule(1, *mountainBaseDef_sb0);
-	mountainBaseDef_bl->SetControlModule(*mountainBaseDef_sb1);
-
-	// 7: [Coarse-turbulence module]: This turbulence module warps the output
-	//    value from the mountain-and-valleys module, adding some coarse detail
-	//    to it.
-	module::Turbulence* mountainBaseDef_tu0 = new module::Turbulence();
-	mountainBaseDef_tu0->SetSourceModule(0, *mountainBaseDef_bl);
-	mountainBaseDef_tu0->SetSeed(seed + 32);
-	mountainBaseDef_tu0->SetFrequency(MOUNTAINS_FREQUENCY * 1337.0);
-	mountainBaseDef_tu0->SetPower(1.0 / 6730.0 * MOUNTAINS_TWIST);
-	mountainBaseDef_tu0->SetRoughness(4);
-
-	// 8: [Warped-mountains-and-valleys module]: This turbulence module warps
-	//    the output value from the coarse-turbulence module.  This turbulence
-	//    has a higher frequency, but lower power, than the coarse-turbulence
-	//    module, adding some fine detail to it.
-	module::Turbulence* mountainBaseDef_tu1 = new module::Turbulence();
-	mountainBaseDef_tu1->SetSourceModule(0, *mountainBaseDef_tu0);
-	mountainBaseDef_tu1->SetSeed(seed + 33);
-	mountainBaseDef_tu1->SetFrequency(MOUNTAINS_FREQUENCY * 21221.0);
-	mountainBaseDef_tu1->SetPower(1.0 / 120157.0 * MOUNTAINS_TWIST);
-	mountainBaseDef_tu1->SetRoughness(6);
-
-	// 9: [Mountain-base-definition subgroup]: Caches the output value from the
-	//    warped-mountains-and-valleys module.
-	module::Cache* mountainBaseDef = new module::Cache();
-	mountainBaseDef->SetSourceModule(0, *mountainBaseDef_tu1);
-
-
-	////////////////////////////////////////////////////////////////////////////
-	// Module subgroup: high mountainous terrain (5 noise modules)
-	//
-	// This subgroup generates the mountainous terrain that appears at high
-	// elevations within the mountain ridges.
-	//
-	// -1.0 represents the lowest elevations and +1.0 represents the highest
-	// elevations.
-	//
-
-	// 1: [Mountain-basis-0 module]: This ridged-multifractal-noise module,
-	//    along with the mountain-basis-1 module, generates the individual
-	//    mountains.
-	module::RidgedMulti* mountainousHigh_rm0 = new module::RidgedMulti();
-	mountainousHigh_rm0->SetSeed(seed + 40);
-	mountainousHigh_rm0->SetFrequency(MOUNTAINS_FREQUENCY * 2371.0);
-	mountainousHigh_rm0->SetLacunarity(MOUNTAIN_LACUNARITY);
-	mountainousHigh_rm0->SetOctaveCount(3);
-	mountainousHigh_rm0->SetNoiseQuality(QUALITY_BEST);
-
-	// 2: [Mountain-basis-1 module]: This ridged-multifractal-noise module,
-	//    along with the mountain-basis-0 module, generates the individual
-	//    mountains.
-	module::RidgedMulti* mountainousHigh_rm1 = new module::RidgedMulti();
-	mountainousHigh_rm1->SetSeed(seed + 41);
-	mountainousHigh_rm1->SetFrequency(MOUNTAINS_FREQUENCY * 2341.0);
-	mountainousHigh_rm1->SetLacunarity(MOUNTAIN_LACUNARITY);
-	mountainousHigh_rm1->SetOctaveCount(3);
-	mountainousHigh_rm1->SetNoiseQuality(QUALITY_BEST);
-
-	// 3: [High-mountains module]: Next, a maximum-value module causes more
-	//    mountains to appear at the expense of valleys.  It does this by
-	//    ensuring that only the maximum of the output values from the two
-	//    ridged-multifractal-noise modules contribute to the output value of
-	//    this subgroup.
-	module::Max* mountainousHigh_ma = new module::Max();
-	mountainousHigh_ma->SetSourceModule(0, *mountainousHigh_rm0);
-	mountainousHigh_ma->SetSourceModule(1, *mountainousHigh_rm1);
-
-	// 4: [Warped-high-mountains module]: This turbulence module warps the
-	//    output value from the high-mountains module, adding some detail to it.
-	module::Turbulence* mountainousHigh_tu = new module::Turbulence();
-	mountainousHigh_tu->SetSourceModule(0, *mountainousHigh_ma);
-	mountainousHigh_tu->SetSeed(seed + 42);
-	mountainousHigh_tu->SetFrequency(MOUNTAINS_FREQUENCY * 31511.0);
-	mountainousHigh_tu->SetPower(1.0 / 180371.0 * MOUNTAINS_TWIST);
-	mountainousHigh_tu->SetRoughness(4);
-
-	// 5: [High-mountainous-terrain subgroup]: Caches the output value from the
-	//    warped-high-mountains module.
-	module::Cache* mountainousHigh = new module::Cache();
-	mountainousHigh->SetSourceModule(0, *mountainousHigh_tu);
-
-
-	////////////////////////////////////////////////////////////////////////////
-	// Module subgroup: low mountainous terrain (4 noise modules)
-	//
-	// This subgroup generates the mountainous terrain that appears at low
-	// elevations within the river valleys.
-	//
-	// -1.0 represents the lowest elevations and +1.0 represents the highest
-	// elevations.
-	//
-
-	// 1: [Lowland-basis-0 module]: This ridged-multifractal-noise module,
-	//    along with the lowland-basis-1 module, produces the low mountainous
-	//    terrain.
-	/*module::RidgedMulti* mountainousLow_rm0 = new module::RidgedMulti();
-	mountainousLow_rm0->SetSeed(seed + 50);
-	mountainousLow_rm0->SetFrequency(MOUNTAINS_FREQUENCY * 1381.0);
-	mountainousLow_rm0->SetLacunarity(MOUNTAIN_LACUNARITY);
-	mountainousLow_rm0->SetOctaveCount(8);
-	mountainousLow_rm0->SetNoiseQuality(QUALITY_BEST);
-
-	// 1: [Lowland-basis-1 module]: This ridged-multifractal-noise module,
-	//    along with the lowland-basis-0 module, produces the low mountainous
-	//    terrain.
-	module::RidgedMulti* mountainousLow_rm1 = new module::RidgedMulti();
-	mountainousLow_rm1->SetSeed(seed + 51);
-	mountainousLow_rm1->SetFrequency(MOUNTAINS_FREQUENCY * 1427.0);
-	mountainousLow_rm1->SetLacunarity(MOUNTAIN_LACUNARITY);
-	mountainousLow_rm1->SetOctaveCount(8);
-	mountainousLow_rm1->SetNoiseQuality(QUALITY_BEST);
-
-	// 3: [Low-mountainous-terrain module]: This multiplication module combines
-	//    the output values from the two ridged-multifractal-noise modules.
-	//    This causes the following to appear in the resulting terrain:
-	//    - Cracks appear when two negative output values are multiplied
-	//      together.
-	//    - Flat areas appear when a positive and a negative output value are
-	//      multiplied together.
-	//    - Ridges appear when two positive output values are multiplied
-	//      together.
-	module::Multiply* mountainousLow_mu = new module::Multiply();
-	mountainousLow_mu->SetSourceModule(0, *mountainousLow_rm0);
-	mountainousLow_mu->SetSourceModule(1, *mountainousLow_rm1);
-
-	// 4: [Low-mountainous-terrain subgroup]: Caches the output value from the
-	//    low-moutainous-terrain module.
-	module::Cache* mountainousLow = new module::Cache();
-	mountainousLow->SetSourceModule(0, *mountainousLow_mu);*/
-
-
-	////////////////////////////////////////////////////////////////////////////
-	// Module subgroup: mountainous terrain (7 noise modules)
-	//
-	// This subgroup generates the final mountainous terrain by combining the
-	// high-mountainous-terrain subgroup with the low-mountainous-terrain
-	// subgroup.
-	//
-	// -1.0 represents the lowest elevations and +1.0 represents the highest
-	// elevations.
-	//
-
-	// 1: [Scaled-low-mountainous-terrain module]: First, this scale/bias module
-	//    scales the output value from the low-mountainous-terrain subgroup to a
-	//    very low value and biases it towards -1.0.  This results in the low
-	//    mountainous areas becoming more-or-less flat with little variation.
-	//    This will also result in the low mountainous areas appearing at the
-	//    lowest elevations in this subgroup.
-	/*module::ScaleBias* mountainousTerrain_sb0 = new module::ScaleBias();
-	mountainousTerrain_sb0->SetSourceModule(0, *mountainousLow);
-	mountainousTerrain_sb0->SetScale(0.03125);
-	mountainousTerrain_sb0->SetBias(-0.96875);*/
-
-	// 2: [Scaled-high-mountainous-terrain module]: Next, this scale/bias module
-	//    scales the output value from the high-mountainous-terrain subgroup to
-	//    1/4 of its initial value and biases it so that its output value is
-	//    usually positive.
-	module::ScaleBias* mountainousTerrain_sb1 = new module::ScaleBias();
-	mountainousTerrain_sb1->SetSourceModule(0, *mountainousHigh);
-	mountainousTerrain_sb1->SetScale(0.25);
-	mountainousTerrain_sb1->SetBias(0.25);
-
-	// 3: [Added-high-mountainous-terrain module]: This addition module adds the
-	//    output value from the scaled-high-mountainous-terrain module to the
-	//    output value from the mountain-base-definition subgroup.  Mountains
-	//    now appear all over the terrain.
-	module::Add* mountainousTerrain_ad = new module::Add();
-	mountainousTerrain_ad->SetSourceModule(0, *mountainousTerrain_sb1);
-	mountainousTerrain_ad->SetSourceModule(1, *mountainBaseDef);
-
-	// 4: [Combined-mountainous-terrain module]: Note that at this point, the
-	//    entire terrain is covered in high mountainous terrain, even at the low
-	//    elevations.  To make sure the mountains only appear at the higher
-	//    elevations, this selector module causes low mountainous terrain to
-	//    appear at the low elevations (within the valleys) and the high
-	//    mountainous terrain to appear at the high elevations (within the
-	//    ridges.)  To do this, this noise module selects the output value from
-	//    the added-high-mountainous-terrain module if the output value from the
-	//    mountain-base-definition subgroup is higher than a set amount.
-	//    Otherwise, this noise module selects the output value from the scaled-
-	//    low-mountainous-terrain module.
-	/*module::Select* mountainousTerrain_se = new module::Select();
-	mountainousTerrain_se->SetSourceModule(0, *mountainousTerrain_sb0);
-	mountainousTerrain_se->SetSourceModule(1, *mountainousTerrain_ad);
-	mountainousTerrain_se->SetControlModule(*mountainBaseDef);
-	mountainousTerrain_se->SetBounds(-0.5, 999.5);
-	mountainousTerrain_se->SetEdgeFalloff(0.5);*/
-
-	// 5: [Scaled-mountainous-terrain-module]: This scale/bias module slightly
-	//    reduces the range of the output value from the combined-mountainous-
-	//    terrain module, decreasing the heights of the mountain peaks.
-	module::ScaleBias* mountainousTerrain_sb2 = new module::ScaleBias();
-	mountainousTerrain_sb2->SetSourceModule(0, *mountainBaseDef);
-	mountainousTerrain_sb2->SetScale(0.8);
-	mountainousTerrain_sb2->SetBias(0.5);
-
-	// 6: [Glaciated-mountainous-terrain-module]: This exponential-curve module
-	//    applies an exponential curve to the output value from the scaled-
-	//    mountainous-terrain module.  This causes the slope of the mountains to
-	//    smoothly increase towards higher elevations, as if a glacier grinded
-	//    out those mountains.  This exponential-curve module expects the output
-	//    value to range from -1.0 to +1.0.
-	module::Exponent* mountainousTerrain_ex = new module::Exponent();
-	mountainousTerrain_ex->SetSourceModule(0, *mountainousTerrain_sb2);
-	mountainousTerrain_ex->SetExponent(MOUNTAIN_GLACIATION);
-
-	// 7: [Mountainous-terrain group]: Caches the output value from the
-	//    glaciated-mountainous-terrain module.  This is the output value for
-	//    the entire mountainous-terrain group.
-	module::Cache* mountainousTerrain = new module::Cache();
-	mountainousTerrain->SetSourceModule(0, *mountainousTerrain_ex);
-
-	return mountainousTerrain;
-}
 
 module::Module * EagleBird::WorldGeneration::WorldGenerator::GenerateRivers(float seed, float general_frequency)
 {

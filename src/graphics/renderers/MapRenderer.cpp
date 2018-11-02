@@ -7,7 +7,7 @@ void EagleBird::Graphics::Renderers::MapRenderer::InitMap(WorldGeneration::World
 	glm::vec3 sea_color = glm::vec3(0.06f, 0.43f, 0.86f);
 	glm::vec3 beach_color = glm::vec3(231 / 256.0, 207 / 256.0, 133 / 256.0);
 
-	float color_differ = 0.00f;
+	float color_differ = 0.05f;
 
 	// Create the vertices vector and allocate enough memory.
 	OpenGL::Vertex* vertices = new OpenGL::Vertex[6 * x_size / SIMPLENESS * z_size / SIMPLENESS];
@@ -20,6 +20,7 @@ void EagleBird::Graphics::Renderers::MapRenderer::InitMap(WorldGeneration::World
 		for (int j = 0; j < z_size / SIMPLENESS; j++)
 		{
 			height_points[i][j] = glm::vec3(i + (rand() % 1000) / 2000.0f - 0.25f, 0.0f, j + (rand() % 1000) / 2000.0f - 0.25f);
+			//height_points[i][j] = glm::vec3(i, 0.0, j);
 			height_points[i][j].y = generator->GetHeight(height_points[i][j].x, height_points[i][j].z);
 			height_points[i][j].x *= SIMPLENESS;
 			height_points[i][j].z *= SIMPLENESS;
@@ -30,9 +31,9 @@ void EagleBird::Graphics::Renderers::MapRenderer::InitMap(WorldGeneration::World
 	{
 		for (int j = 0; j < z_size / SIMPLENESS - 1; j++)
 		{
-			glm::vec3 color = glm::vec3(base_color.r + ((rand() % 1000 - 500) / 500.0f * 0.0),
+			glm::vec3 color = glm::vec3(base_color.r + ((rand() % 1000 - 500) / 500.0f * color_differ),
 				base_color.g + ((rand() % 1000 - 500) / 500.0f * color_differ),
-				base_color.b + ((rand() % 1000 - 500) / 500.0f * 0.0));
+				base_color.b + ((rand() % 1000 - 500) / 500.0f * color_differ));
 
 
 			// Generate 2 triangles per tile
@@ -71,35 +72,56 @@ void EagleBird::Graphics::Renderers::MapRenderer::InitMap(WorldGeneration::World
 			glm::vec3 normal = glm::triangleNormal(points[0], points[1], points[2]);
 			glm::vec3 normal2 = glm::triangleNormal(points[3], points[4], points[5]);
 
-			for (int i = 0; i < 6; i++)
-			{
-				if (points[i].y < 128.0)
-				{
-					color = sea_color;
-				}
-				else if (points[i].y < 132.0)
-				{
-					color = beach_color;
-				}
-			}
-			glm::vec3 color3 = glm::vec3(0.5);
+			glm::vec3 color3 = glm::vec3(0.5);//glm::vec3(54 / 255.0, 46 / 255.0, 28 / 255.0);
 			glm::vec3 color2 = color;
 
-			double angle1 = glm::angle(normal, glm::vec3(0.0, 1.0, 0.0));
-			double angle2 = glm::angle(normal2, glm::vec3(0.0, 1.0, 0.0));
-
-			if (angle1 > 45.0)
+			if (points[0].y < 128.0)
 			{
-				color.r = LinearInterp(color.r, color3.r, angle1 / 90.0f);
-				color.g = LinearInterp(color.g, color3.g, angle1 / 90.0f);
-				color.b = LinearInterp(color.b, color3.b, angle1 / 90.0f);
+				color = sea_color;
+				color2 = color;
 			}
-
-			if (angle2 > 45.0)
+			else if (points[0].y < 132.0)
 			{
-				color2.r = LinearInterp(color2.r, color3.r, angle2 / 90.0f);
-				color2.g = LinearInterp(color2.g, color3.g, angle2 / 90.0f);
-				color2.b = LinearInterp(color2.b, color3.b, angle2 / 90.0f);
+				color = beach_color;
+				color2 = color;
+			}
+			else
+			{
+				color = generator->GetColor(points[0].x / SIMPLENESS, points[0].z / SIMPLENESS);
+				color2 = color;
+
+				double angle1 = glm::angle(normal, glm::vec3(0.0, 1.0, 0.0));
+				double angle2 = glm::angle(normal2, glm::vec3(0.0, 1.0, 0.0));
+
+				/*if (angle1 > 30.0)
+				{
+					color.r = LinearInterp(color.r, color3.r, (angle1 - 30.0) / 60.0f);
+					color.g = LinearInterp(color.g, color3.g, (angle1 - 30.0) / 60.0f);
+					color.b = LinearInterp(color.b, color3.b, (angle1 - 30.0) / 60.0f);
+				}
+
+				if (angle2 > 30.0)
+				{
+					color2.r = LinearInterp(color.r, color3.r, (angle2 - 30.0) / 60.0f);
+					color2.g = LinearInterp(color.g, color3.g, (angle2 - 30.0) / 60.0f);
+					color2.b = LinearInterp(color.b, color3.b, (angle2 - 30.0) / 60.0f);
+				}*/
+
+				if (angle1 > 30.0)
+				{
+					float diff = (angle1 - 30.0) / 60.0f * 0.1f;
+					color = glm::vec3(color.r + ((rand() % 1000 - 500) / 500.0f * diff),
+						color.g + ((rand() % 1000 - 500) / 500.0f * diff),
+						color.b + ((rand() % 1000 - 500) / 500.0f * diff));
+				}
+
+				if (angle2 > 30.0)
+				{
+					float diff = (angle2 - 30.0) / 60.0f * 0.1f;
+					color2 = glm::vec3(color2.r + ((rand() % 1000 - 500) / 500.0f * diff),
+						color2.g + ((rand() % 1000 - 500) / 500.0f * diff),
+						color2.b + ((rand() % 1000 - 500) / 500.0f * diff));
+				}
 			}
 			
 

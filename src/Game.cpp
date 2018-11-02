@@ -42,7 +42,7 @@ void EagleBird::Game::Initialize()
 	_camera = new Utils::Camera(_window);
 
 	_profiler->StartNewProfile("World Generation");
-	_world = new World(2048, 256, 2048);
+	_world = new World(4096, 256, 4096);
 	_profiler->EndProfile("World Generation");
 
 	_profiler->StartNewProfile("Rendering Generation");

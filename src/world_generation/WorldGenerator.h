@@ -24,11 +24,10 @@ namespace EagleBird
 			module::Module* _terrain_type;
 			
 			float GetHeight(float x, float y);
-			float GetBiomeValue(float x, float y);
+			glm::vec3 GetColor(float x, float y);
 		private:
 			module::Module* GenerateBaseElevation(float seed, float general_frequency);
 			module::Cache* GenerateBadlands(float seed, float general_frequency);
-			module::Cache* GenerateMountains(float seed, float general_frequency);
 			module::Module* GenerateRivers(float seed, float general_frequency);
 			float normal_float(float f);
 
@@ -37,6 +36,7 @@ namespace EagleBird
 			uint32_t _size_y;
 			uint32_t _size_z;
 			noise::utils::NoiseMap* _height_map;
+			noise::utils::NoiseMap* _temperature_map;
 			module::Module* _biome_module;
 			BiomeManager* _biomes_manager;
 			struct osn_context* _ctx;
